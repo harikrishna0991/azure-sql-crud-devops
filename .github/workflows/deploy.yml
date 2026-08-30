@@ -1,11 +1,7 @@
-﻿name: Azure CRUD CI-CD
+name: Azure CRUD CI-CD
 
 on:
-  push:
-    branches:
-      - feature/azure-crud-deployment
   workflow_dispatch:
-
 permissions:
   contents: read
   id-token: write
@@ -130,9 +126,11 @@ jobs:
       - name: Create temporary SQL firewall rule
         shell: bash
         run: |
+          set -euo pipefail
+
           RUNNER_IP=$(curl -fsS https://api.ipify.org)
+
           echo "Runner public IP: $RUNNER_IP"
-          echo "RUNNER_IP=$RUNNER_IP" >> "$GITHUB_ENV"
 
           az sql server firewall-rule create \
             --resource-group "$RESOURCE_GROUP" \
@@ -144,17 +142,24 @@ jobs:
       - name: Get Azure SQL access token
         shell: bash
         run: |
+          set -euo pipefail
+
           az account get-access-token \
             --resource https://database.windows.net \
             --query accessToken \
             -o tsv > "$RUNNER_TEMP/sql-token"
 
-          iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/sql-token" > "$RUNNER_TEMP/sql-token-utf16"
+          iconv -f UTF-8 -t UTF-16LE \
+            "$RUNNER_TEMP/sql-token" \
+            > "$RUNNER_TEMP/sql-token-utf16"
+
           rm -f "$RUNNER_TEMP/sql-token"
 
       - name: Initialize Azure SQL database
         shell: bash
         run: |
+          set -euo pipefail
+
           sqlcmd \
             -S "${{ steps.tfout.outputs.sql_fqdn }}" \
             -d "${{ steps.tfout.outputs.sql_database }}" \
@@ -164,13 +169,26 @@ jobs:
             -l 60 \
             -i "scripts/sql/init.sql"
 
+      - name: Verify SQL database objects
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sqlcmd \
+            -S "${{ steps.tfout.outputs.sql_fqdn }}" \
+            -d "${{ steps.tfout.outputs.sql_database }}" \
+            -G \
+            -P "$RUNNER_TEMP/sql-token-utf16" \
+            -b \
+            -l 60 \
+            -Q "SELECT DB_NAME() AS DatabaseName; SELECT name FROM sys.tables WHERE name = 'Todo';"
+
       - name: Remove SQL access token
         if: always()
         shell: bash
         run: |
           rm -f "$RUNNER_TEMP/sql-token-utf16"
 
-      - name: Verify SQL database objects
       - name: Remove temporary SQL firewall rule
         if: always()
         shell: bash
@@ -180,7 +198,6 @@ jobs:
             --server "$SQL_SERVER_NAME" \
             --name github-actions-temp \
             --yes
-
       - name: Create database connection secret
         shell: bash
         run: |
