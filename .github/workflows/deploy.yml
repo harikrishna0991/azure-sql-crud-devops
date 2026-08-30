@@ -175,10 +175,76 @@ jobs:
             --query accessToken \
             -o tsv > "$RUNNER_TEMP/sql-token"
 
+          if [ ! -s "$RUNNER_TEMP/sql-token" ]; then
+            echo "ERROR: SQL access token was not created."
+            exit 1
+          fi
+
           iconv -f UTF-8 -t UTF-16LE \
             "$RUNNER_TEMP/sql-token" \
             > "$RUNNER_TEMP/sql-token-utf16"
 
+          echo "Azure SQL access token acquired successfully."
+
+      - name: Verify Azure SQL token identity
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - "$RUNNER_TEMP/sql-token" <<'PY'
+          import base64
+          import json
+          import sys
+
+          token = open(sys.argv[1], encoding="utf-8").read().strip()
+          parts = token.split(".")
+
+          if len(parts) != 3:
+              raise SystemExit("ERROR: Invalid JWT format.")
+
+          payload = parts[1]
+          payload += "=" * (-len(payload) % 4)
+
+          claims = json.loads(
+              base64.urlsafe_b64decode(payload).decode("utf-8")
+          )
+
+          print("SQL token claims:")
+          print("  appid =", claims.get("appid"))
+          print("  oid   =", claims.get("oid"))
+          print("  tid   =", claims.get("tid"))
+          print("  aud   =", claims.get("aud"))
+          print("  idtyp =", claims.get("idtyp"))
+
+          expected_oid = "7edca6f4-2349-451d-8662-847dcf41c1dd"
+          expected_tid = "06a541a1-7940-4a94-8ee8-8287d5c5a99d"
+          expected_aud = "https://database.windows.net"
+
+          actual_oid = claims.get("oid")
+          actual_tid = claims.get("tid")
+          actual_aud = (claims.get("aud") or "").rstrip("/")
+
+          if actual_oid != expected_oid:
+              print("ERROR: SQL token oid does not match GitHub Actions UAMI.")
+              print("Expected oid:", expected_oid)
+              print("Actual oid  :", actual_oid)
+              raise SystemExit(1)
+
+          if actual_tid != expected_tid:
+              print("ERROR: SQL token tenant does not match expected tenant.")
+              raise SystemExit(1)
+
+          if actual_aud != expected_aud:
+              print("ERROR: SQL token audience is not Azure SQL.")
+              raise SystemExit(1)
+
+          print("SUCCESS: SQL token identity matches GitHub Actions UAMI.")
+          PY
+
+      - name: Remove raw SQL access token
+        if: always()
+        shell: bash
+        run: |
           rm -f "$RUNNER_TEMP/sql-token"
 
       - name: Initialize Azure SQL database
