@@ -1,4 +1,4 @@
-﻿resource "azurerm_service_plan" "app" {
+resource "azurerm_service_plan" "app" {
   name                = "${local.name_prefix}-plan"
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
