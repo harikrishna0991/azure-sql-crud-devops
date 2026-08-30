@@ -186,6 +186,43 @@ jobs:
         run: |
           set -euo pipefail
 
+          APP_PRINCIPAL_ID="${{ steps.tfout.outputs.app_principal_id }}"
+
+          echo "App Service managed identity: $APP_PRINCIPAL_ID"
+
+          if [ -z "$APP_PRINCIPAL_ID" ]; then
+            echo "ERROR: App Service principal ID is empty."
+            exit 1
+          fi
+
+          APP_SID=$(python3 - "$APP_PRINCIPAL_ID" <<'PY'
+          import sys
+          import uuid
+
+          principal_id = uuid.UUID(sys.argv[1])
+          print("0x" + principal_id.bytes_le.hex())
+          PY
+          )
+
+          echo "Generated SQL SID successfully."
+
+          SQL_SCRIPT="$RUNNER_TEMP/init.sql"
+
+          sed \
+            "s/__APP_SERVICE_OBJECT_ID_SID__/$APP_SID/g" \
+            "scripts/sql/init.sql" \
+            > "$SQL_SCRIPT"
+
+          if [ ! -s "$SQL_SCRIPT" ]; then
+            echo "ERROR: Generated SQL script is empty or missing."
+            exit 1
+          fi
+
+          if grep -q "__APP_SERVICE_OBJECT_ID_SID__" "$SQL_SCRIPT"; then
+            echo "ERROR: SQL SID placeholder was not replaced."
+            exit 1
+          fi
+
           /opt/mssql-tools18/bin/sqlcmd \
             -S "${{ steps.tfout.outputs.sql_fqdn }}" \
             -d "$SQL_DATABASE_NAME" \
@@ -193,7 +230,7 @@ jobs:
             -P "$RUNNER_TEMP/sql-token-utf16" \
             -b \
             -l 60 \
-            -i "scripts/sql/init.sql"
+            -i "$SQL_SCRIPT"
 
       - name: Verify SQL database objects
         shell: bash

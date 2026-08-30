@@ -11,8 +11,8 @@ resource "azurerm_mssql_server" "main" {
   }
 
   azuread_administrator {
-    login_username              = var.sql_admin_login
-    object_id                   = var.sql_admin_object_id
+    login_username              = "github-actions-uami"
+    object_id                   = var.github_actions_uami_principal_id
     tenant_id                   = data.azurerm_client_config.current.tenant_id
     azuread_authentication_only = true
   }

@@ -1,10 +1,12 @@
-﻿IF NOT EXISTS (
+IF NOT EXISTS (
     SELECT 1
     FROM sys.database_principals
     WHERE name = N'azurecrud-dev-app'
 )
 BEGIN
-    CREATE USER [azurecrud-dev-app] FROM EXTERNAL PROVIDER;
+    CREATE USER [azurecrud-dev-app]
+    WITH SID = __APP_SERVICE_OBJECT_ID_SID__,
+         TYPE = E;
 END
 GO
 
@@ -37,7 +39,6 @@ BEGIN
     ALTER ROLE db_datawriter ADD MEMBER [azurecrud-dev-app];
 END
 GO
-
 IF OBJECT_ID(N'dbo.Todo', N'U') IS NULL
 BEGIN
     CREATE TABLE dbo.Todo
