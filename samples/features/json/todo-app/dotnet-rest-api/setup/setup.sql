@@ -1,19 +1,26 @@
-﻿DROP TABLE IF EXISTS Todo
+-- Azure SQL schema for the Todo API.
+-- This script creates only the application table.
+-- Authentication is handled separately through Microsoft Entra ID.
 
+IF OBJECT_ID(N'dbo.Todo', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Todo
+    (
+        Id INT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_Todo PRIMARY KEY,
+        Title NVARCHAR(30) NOT NULL,
+        Description NVARCHAR(4000) NULL,
+        Completed BIT NOT NULL
+            CONSTRAINT DF_Todo_Completed DEFAULT (0),
+        DueDate DATETIME2 NULL
+    );
+END;
 GO
 
-CREATE TABLE Todo (
-	id int IDENTITY PRIMARY KEY,
-	title nvarchar(30) NOT NULL,
-	description nvarchar(4000),
-	completed bit,
-	dueDate datetime2 default (dateadd(day, 3, getdate()))
-)
-
+IF NOT EXISTS (SELECT 1 FROM dbo.Todo)
+BEGIN
+    INSERT INTO dbo.Todo (Title, Description, Completed, DueDate)
+    VALUES
+        (N'First Todo', N'Created for Azure SQL CRUD validation', 0, DATEADD(DAY, 1, SYSUTCDATETIME()));
+END;
 GO
-
-INSERT INTO Todo (title, description, completed, dueDate)
-VALUES
-('Install SQL Server 2016','Install RTM version of SQL Server 2016', 0, '2016-06-01'),
-('Get new samples','Go to github and download new samples', 0, '2016-06-02'),
-('Try new samples','Install new Management Studio to try samples', 0, '2016-06-02')
