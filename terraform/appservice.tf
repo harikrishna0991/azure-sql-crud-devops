@@ -38,8 +38,7 @@ resource "azurerm_linux_web_app" "app" {
 
     minimum_tls_version = "1.2"
     ftps_state          = "Disabled"
-
-    vnet_route_all_enabled = true
+  vnet_route_all_enabled = true
 
     application_stack {
       dotnet_version = "8.0"
