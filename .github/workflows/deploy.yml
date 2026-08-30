@@ -128,11 +128,18 @@ jobs:
       - name: Install sqlcmd
         shell: bash
         run: |
+          set -euo pipefail
+
           curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
-          curl -sSL https://packages.microsoft.com/config/ubuntu/22.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          curl -sSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
+
+          export PATH="/opt/mssql-tools18/bin:$PATH"
           echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
+
+          command -v sqlcmd
           sqlcmd -?
 
       - name: Create temporary SQL firewall rule
