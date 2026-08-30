@@ -37,14 +37,23 @@ jobs:
       - name: Restore
         run: dotnet restore "$DOTNET_PROJECT"
 
+      - name: Show .NET SDK
+        run: |
+          dotnet --version
+          dotnet --info
+
+      - name: Inspect evaluated target frameworks
+        run: |
+          dotnet msbuild "$DOTNET_PROJECT" -getProperty:TargetFramework -getProperty:TargetFrameworks
+
       - name: Build
-        run: dotnet build "$DOTNET_PROJECT" --configuration Release --no-restore
+        run: dotnet build "$DOTNET_PROJECT" --configuration Release --framework net8.0 --no-restore
 
       - name: Test
-        run: dotnet test "$DOTNET_PROJECT" --configuration Release --no-build --verbosity normal
+        run: dotnet test "$DOTNET_PROJECT" --configuration Release --framework net8.0 --no-build --verbosity normal
 
       - name: Publish
-        run: dotnet publish "$DOTNET_PROJECT" --configuration Release --no-build --output ./publish
+        run: dotnet publish "$DOTNET_PROJECT" --configuration Release --framework net8.0 --no-build --output ./publish
 
       - name: Upload application artifact
         uses: actions/upload-artifact@v4
