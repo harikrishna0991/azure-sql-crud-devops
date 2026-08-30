@@ -136,11 +136,18 @@ jobs:
           sudo apt-get update
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
 
-          export PATH="/opt/mssql-tools18/bin:$PATH"
-          echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
+          SQLCMD="/opt/mssql-tools18/bin/sqlcmd"
 
-          command -v sqlcmd
-          sqlcmd -?
+          if [ ! -x "$SQLCMD" ]; then
+            echo "sqlcmd was not found at $SQLCMD"
+            echo "Searching for installed sqlcmd..."
+            find /opt -type f -name sqlcmd -print || true
+            exit 1
+          fi
+
+          echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
+          echo "sqlcmd found at: $SQLCMD"
+          "$SQLCMD" -?
 
       - name: Create temporary SQL firewall rule
         shell: bash
@@ -179,7 +186,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          sqlcmd \
+          /opt/mssql-tools18/bin/sqlcmd \
             -S "${{ steps.tfout.outputs.sql_fqdn }}" \
             -d "$SQL_DATABASE_NAME" \
             -G \
@@ -193,7 +200,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          sqlcmd \
+          /opt/mssql-tools18/bin/sqlcmd \
             -S "${{ steps.tfout.outputs.sql_fqdn }}" \
             -d "$SQL_DATABASE_NAME" \
             -G \
