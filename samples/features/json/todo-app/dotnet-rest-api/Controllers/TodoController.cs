@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Data;
 
@@ -252,9 +252,17 @@ public class TodoController(IConfiguration configuration) : ControllerBase
             : NoContent();
     }
 
-    private static string BuildConnectionString(
-        IConfiguration configuration)
+    private static string BuildConnectionString(IConfiguration configuration)
     {
+        var keyVaultConnectionString =
+            configuration["AZURE_SQL_CONNECTIONSTRING"]
+            ?? Environment.GetEnvironmentVariable("AZURE_SQL_CONNECTIONSTRING");
+
+        if (!string.IsNullOrWhiteSpace(keyVaultConnectionString))
+        {
+            return keyVaultConnectionString;
+        }
+
         var server =
             configuration["AZURE_SQL_SERVER"]
             ?? Environment.GetEnvironmentVariable("AZURE_SQL_SERVER");
@@ -282,7 +290,6 @@ public class TodoController(IConfiguration configuration) : ControllerBase
             "Encrypt=True;" +
             "TrustServerCertificate=False;";
     }
-
     private static void AddTodoParameters(
         SqlCommand command,
         string title,
