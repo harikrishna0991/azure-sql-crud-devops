@@ -173,19 +173,25 @@ jobs:
           az account get-access-token \
             --resource https://database.windows.net \
             --query accessToken \
-            -o tsv > "$RUNNER_TEMP/sql-token"
+            -o tsv \
+            | tr -d '\r\n' \
+            > "$RUNNER_TEMP/sql-token"
 
           if [ ! -s "$RUNNER_TEMP/sql-token" ]; then
             echo "ERROR: SQL access token was not created."
             exit 1
           fi
 
-          iconv -f UTF-8 -t UTF-16LE \
+          iconv -f ascii -t UTF-16LE \
             "$RUNNER_TEMP/sql-token" \
             > "$RUNNER_TEMP/sql-token-utf16"
 
-          echo "Azure SQL access token acquired successfully."
+          if [ ! -s "$RUNNER_TEMP/sql-token-utf16" ]; then
+            echo "ERROR: UTF-16LE SQL access token was not created."
+            exit 1
+          fi
 
+          echo "Azure SQL access token acquired successfully."
       - name: Verify Azure SQL token identity
         shell: bash
         run: |
