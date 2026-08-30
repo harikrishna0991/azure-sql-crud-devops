@@ -1,19 +1,18 @@
-﻿DROP TABLE IF EXISTS Todo
+﻿IF OBJECT_ID('dbo.Todo', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.Todo
+    (
+        Id INT IDENTITY(1,1) NOT NULL
+            CONSTRAINT PK_Todo PRIMARY KEY,
 
+        Title NVARCHAR(30) NOT NULL,
+
+        Description NVARCHAR(4000) NULL,
+
+        Completed BIT NOT NULL
+            CONSTRAINT DF_Todo_Completed DEFAULT 0,
+
+        DueDate DATETIME2 NULL
+    );
+END
 GO
-
-CREATE TABLE Todo (
-	id int IDENTITY PRIMARY KEY,
-	title nvarchar(30) NOT NULL,
-	description nvarchar(4000),
-	completed bit,
-	dueDate datetime2 default (dateadd(day, 3, getdate()))
-)
-
-GO
-
-INSERT INTO Todo (title, description, completed, dueDate)
-VALUES
-('Install SQL Server 2016','Install RTM version of SQL Server 2016', 0, '2016-06-01'),
-('Get new samples','Go to github and download new samples', 0, '2016-06-02'),
-('Try new samples','Install new Management Studio to try samples', 0, '2016-06-02')

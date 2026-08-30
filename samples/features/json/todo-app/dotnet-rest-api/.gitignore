@@ -1,9 +1,39 @@
-TodoRestWebAPI.xproj.user
-.vs/*
-.vscode/*
-bin/*
-obj/*
-*.sln
+﻿# Build output
+bin/
+obj/
+
+# Visual Studio
+.vs/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+# Visual Studio Code
+.vscode/
+
+# Rider
+.idea/
+
+# Test results
+TestResults/
+*.trx
+
+# NuGet
+*.nupkg
+packages/
+
+# Logs
 *.log
-Properties/PublishProfiles/*
-appsettings.development.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# ASP.NET Core
+wwwroot/lib/
