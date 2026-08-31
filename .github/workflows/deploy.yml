@@ -281,18 +281,16 @@ jobs:
             --output none
 
           echo "Temporary GitHub Actions SQL firewall rule created."
-
       - name: Install sqlcmd
         shell: bash
         run: |
           set -euo pipefail
 
-          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc |
-            sudo gpg --dearmor \
-              --output /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL \
+            -o packages-microsoft-prod.deb \
+            https://packages.microsoft.com/config/ubuntu/24.04/packages-microsoft-prod.deb
 
-          curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list |
-            sudo tee /etc/apt/sources.list.d/microsoft-prod.list > /dev/null
+          sudo dpkg -i packages-microsoft-prod.deb
 
           sudo apt-get update
 
@@ -301,6 +299,8 @@ jobs:
             unixodbc-dev
 
           echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
+
+          /opt/mssql-tools18/bin/sqlcmd -?
 
       - name: Acquire Azure SQL Access Token
         shell: bash
