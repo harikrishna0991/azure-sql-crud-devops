@@ -31,12 +31,3 @@ resource "azurerm_mssql_database" "main" {
 
   tags = local.common_tags
 }
-
-resource "azurerm_mssql_firewall_rule" "app_service_outbound" {
-  for_each = toset(azurerm_linux_web_app.app.outbound_ip_address_list)
-
-  name             = "appservice-${replace(each.value, ".", "-")}"
-  server_id        = azurerm_mssql_server.main.id
-  start_ip_address = each.value
-  end_ip_address   = each.value
-}

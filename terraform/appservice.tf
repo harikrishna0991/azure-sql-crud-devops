@@ -21,8 +21,7 @@ resource "azurerm_linux_web_app" "app" {
 
   ftp_publish_basic_authentication_enabled       = false
   webdeploy_publish_basic_authentication_enabled = false
-
-  client_certificate_enabled = false
+  client_certificate_enabled                     = false
 
   virtual_network_subnet_id = azurerm_subnet.app_service.id
 
@@ -40,8 +39,10 @@ resource "azurerm_linux_web_app" "app" {
     ftps_state             = "Disabled"
     vnet_route_all_enabled = true
 
+    app_command_line = "gunicorn --bind=0.0.0.0:8000 app:app"
+
     application_stack {
-      dotnet_version = "8.0"
+      python_version = "3.12"
     }
   }
 
@@ -49,6 +50,11 @@ resource "azurerm_linux_web_app" "app" {
     APPLICATIONINSIGHTS_CONNECTION_STRING = azurerm_application_insights.app.connection_string
 
     AZURE_SQL_CONNECTIONSTRING = "@Microsoft.KeyVault(SecretUri=https://${azurerm_key_vault.main.name}.vault.azure.net/secrets/database-connection)"
+
+    APP_MESSAGE = "@Microsoft.KeyVault(SecretUri=https://${azurerm_key_vault.main.name}.vault.azure.net/secrets/app-message)"
+
+    SCM_DO_BUILD_DURING_DEPLOYMENT = "true"
+    ENABLE_ORYX_BUILD              = "true"
   }
 
   tags = local.common_tags

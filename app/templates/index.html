@@ -1,0 +1,95 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Todo Application</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+
+<body>
+
+<div class="container">
+
+    <h1>Todo Application</h1>
+
+    <form method="POST" action="/todos" class="todo-form">
+
+        <label for="title">Title</label>
+
+        <input
+            id="title"
+            name="title"
+            type="text"
+            maxlength="100"
+            required
+        >
+
+        <label for="description">Description</label>
+
+        <textarea
+            id="description"
+            name="description"
+            maxlength="1000"
+            rows="4"
+        ></textarea>
+
+        <button type="submit">Add Todo</button>
+
+    </form>
+
+    <h2>Saved Todos</h2>
+
+    {% if todos %}
+
+        <div class="todo-list">
+
+            {% for todo in todos %}
+
+            <div class="todo-card">
+
+                <div class="todo-header">
+                    <span>#{{ todo.id }}</span>
+
+                    <span>
+                        {% if todo.completed %}
+                            Completed
+                        {% else %}
+                            Pending
+                        {% endif %}
+                    </span>
+                </div>
+
+                <h3>{{ todo.title }}</h3>
+
+                <p>
+                    {{ todo.description or "No description" }}
+                </p>
+
+                <form
+                    method="POST"
+                    action="{{ url_for('delete_todo', todo_id=todo.id) }}"
+                >
+                    <button type="submit" class="delete-button">
+                        Delete
+                    </button>
+                </form>
+
+            </div>
+
+            {% endfor %}
+
+        </div>
+
+    {% else %}
+
+        <p class="empty">
+            No todos found.
+        </p>
+
+    {% endif %}
+
+</div>
+
+</body>
+</html>

@@ -1,10 +1,15 @@
-name: Azure CRUD CI-CD
+name: Azure CRUD Deployment
 
 on:
+  push:
+    branches:
+      - master
+
   workflow_dispatch:
+
 permissions:
-  contents: read
   id-token: write
+  contents: read
 
 env:
   AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -17,53 +22,51 @@ env:
   SQL_DATABASE_NAME: TodoDb
   KEY_VAULT_NAME: azurecrud-dev-kv-2026
 
-  DOTNET_PROJECT: samples/features/json/todo-app/dotnet-rest-api/dotnet-rest-api.csproj
-
 jobs:
 
   build:
-    name: Stage 1 - Build
+    name: Build Python Application
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8
-        uses: actions/setup-dotnet@v4
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          dotnet-version: 8.0.x
+          python-version: "3.12"
 
-      - name: Restore
-        run: dotnet restore "$DOTNET_PROJECT"
-
-      - name: Show .NET SDK
+      - name: Install dependencies
+        working-directory: app
         run: |
-          dotnet --version
-          dotnet --info
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Inspect evaluated target frameworks
+      - name: Validate Python application
         run: |
-          dotnet msbuild "$DOTNET_PROJECT" -getProperty:TargetFramework -getProperty:TargetFrameworks
+          python -m py_compile app/app.py
 
-      - name: Build
-        run: dotnet build "$DOTNET_PROJECT" --configuration Release --framework net8.0 --no-restore
+          test -f app/templates/index.html
+          test -f app/static/style.css
+          test -f app/sql/init.sql
 
-      - name: Test
-        run: dotnet test "$DOTNET_PROJECT" --configuration Release --framework net8.0 --no-build --verbosity normal
-
-      - name: Publish
-        run: dotnet publish "$DOTNET_PROJECT" --configuration Release --framework net8.0 --no-build --output ./publish
+      - name: Create application package
+        run: |
+          rm -rf package
+          mkdir package
+          cp -R app/. package/
 
       - name: Upload application artifact
         uses: actions/upload-artifact@v4
         with:
-          name: todo-api
-          path: publish/
+          name: python-app
+          path: package/
 
 
   infrastructure:
-    name: Stage 2 - Terraform and Data Initialization
+    name: Provision Azure Infrastructure
     runs-on: ubuntu-latest
     needs: build
 
@@ -74,11 +77,9 @@ jobs:
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-      TF_VAR_sql_admin_login: ${{ vars.SQL_ADMIN_LOGIN }}
-      TF_VAR_sql_admin_object_id: ${{ vars.SQL_ADMIN_OBJECT_ID }}
-      TF_VAR_github_actions_uami_principal_id: ${{ vars.UAMI_PRINCIPAL_ID }}
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -89,265 +90,126 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.15.1
+      - name: Verify Azure Login
+        run: |
+          az account show --only-show-errors -o table
 
       - name: Terraform Init
         working-directory: terraform
-        run: terraform init -input=false
+        run: |
+          terraform init -reconfigure
 
       - name: Terraform Format Check
         working-directory: terraform
-        run: terraform fmt -check
+        run: |
+          terraform fmt -check
 
       - name: Terraform Validate
         working-directory: terraform
-        run: terraform validate
+        run: |
+          terraform validate
 
       - name: Terraform Plan
         working-directory: terraform
-        run: terraform plan -input=false -out=tfplan
+        run: |
+          terraform plan -out=tfplan
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -input=false -auto-approve tfplan
+        run: |
+          terraform apply -auto-approve tfplan
 
-      - name: Read Terraform outputs
+      - name: Get Terraform Outputs
         id: tfout
         working-directory: terraform
         shell: bash
         run: |
-          echo "app_name=$(terraform output -raw app_service_name)" >> "$GITHUB_OUTPUT"
-          echo "app_principal_id=$(terraform output -raw app_service_managed_identity_principal_id)" >> "$GITHUB_OUTPUT"
-          echo "sql_fqdn=$(terraform output -raw sql_fully_qualified_domain_name)" >> "$GITHUB_OUTPUT"
-          echo "sql_database=$(terraform output -raw sql_database_name)" >> "$GITHUB_OUTPUT"
-          echo "key_vault_name=$(terraform output -raw key_vault_name)" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+
+          SQL_FQDN=$(terraform output -raw sql_fqdn)
+
+          if [ -z "$SQL_FQDN" ]; then
+            echo "SQL FQDN is empty."
+            exit 1
+          fi
+
+          echo "sql_fqdn=$SQL_FQDN" >> "$GITHUB_OUTPUT"
+
+      - name: Add App Service SQL Firewall Rules
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          OUTBOUND_IPS=$(az webapp show \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --query outboundIpAddresses \
+            -o tsv)
+
+          IFS=',' read -ra IPS <<< "$OUTBOUND_IPS"
+
+          for IP in "${IPS[@]}"; do
+            RULE_NAME="appservice-$(echo "$IP" | tr '.' '-')"
+
+            az sql server firewall-rule create \
+              --resource-group "$RESOURCE_GROUP" \
+              --server "$SQL_SERVER_NAME" \
+              --name "$RULE_NAME" \
+              --start-ip-address "$IP" \
+              --end-ip-address "$IP" \
+              --only-show-errors > /dev/null
+          done
+
+          echo "App Service SQL firewall rules configured."
 
       - name: Install sqlcmd
         shell: bash
         run: |
           set -euo pipefail
 
-          curl https://packages.microsoft.com/keys/microsoft.asc | sudo tee /etc/apt/trusted.gpg.d/microsoft.asc > /dev/null
-          curl -sSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list | sudo tee /etc/apt/sources.list.d/mssql-release.list > /dev/null
+          curl https://packages.microsoft.com/keys/microsoft.asc | \
+            sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+
+          curl https://packages.microsoft.com/config/ubuntu/24.04/prod.list | \
+            sudo tee /etc/apt/sources.list.d/microsoft-prod.list
 
           sudo apt-get update
+
           sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
 
-          SQLCMD="/opt/mssql-tools18/bin/sqlcmd"
-
-          if [ ! -x "$SQLCMD" ]; then
-            echo "sqlcmd was not found at $SQLCMD"
-            echo "Searching for installed sqlcmd..."
-            find /opt -type f -name sqlcmd -print || true
-            exit 1
-          fi
-
           echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
-          echo "sqlcmd found at: $SQLCMD"
-          "$SQLCMD" -?
 
-      - name: Create temporary SQL firewall rule
+      - name: Acquire SQL Access Token
         shell: bash
         run: |
           set -euo pipefail
 
-          RUNNER_IP=$(curl -fsS https://api.ipify.org)
-
-          echo "Runner public IP: $RUNNER_IP"
-
-          az sql server firewall-rule create \
-            --resource-group "$RESOURCE_GROUP" \
-            --server "$SQL_SERVER_NAME" \
-            --name github-actions-temp \
-            --start-ip-address "$RUNNER_IP" \
-            --end-ip-address "$RUNNER_IP"
-
-      - name: Get Azure SQL access token
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          az account get-access-token \
+          SQL_TOKEN=$(az account get-access-token \
             --resource https://database.windows.net \
             --query accessToken \
-            -o tsv \
-            | tr -d '\r\n' \
-            > "$RUNNER_TEMP/sql-token"
+            -o tsv)
 
-          if [ ! -s "$RUNNER_TEMP/sql-token" ]; then
-            echo "ERROR: SQL access token was not created."
-            exit 1
-          fi
+          printf '%s' "$SQL_TOKEN" > "$RUNNER_TEMP/sql-token"
 
-          iconv -f ascii -t UTF-16LE \
-            "$RUNNER_TEMP/sql-token" \
-            > "$RUNNER_TEMP/sql-token-utf16"
-
-          if [ ! -s "$RUNNER_TEMP/sql-token-utf16" ]; then
-            echo "ERROR: UTF-16LE SQL access token was not created."
-            exit 1
-          fi
-
-          echo "Azure SQL access token acquired successfully."
-
-      - name: Verify Azure SQL token identity
+      - name: Initialize Azure SQL Database
         shell: bash
+        env:
+          SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
         run: |
           set -euo pipefail
 
-          python3 - "$RUNNER_TEMP/sql-token" <<'PY'
-          import base64
-          import json
-          import sys
-
-          token = open(sys.argv[1], encoding="utf-8").read().strip()
-          parts = token.split(".")
-
-          if len(parts) != 3:
-              raise SystemExit("ERROR: Invalid JWT format.")
-
-          payload = parts[1]
-          payload += "=" * (-len(payload) % 4)
-
-          claims = json.loads(
-              base64.urlsafe_b64decode(payload).decode("utf-8")
-          )
-
-          print("SQL token claims:")
-          print("  appid =", claims.get("appid"))
-          print("  oid   =", claims.get("oid"))
-          print("  tid   =", claims.get("tid"))
-          print("  aud   =", claims.get("aud"))
-          print("  idtyp =", claims.get("idtyp"))
-
-          expected_oid = "7edca6f4-2349-451d-8662-847dcf41c1dd"
-          expected_tid = "06a541a1-7940-4a94-8ee8-8287d5c5a99d"
-          expected_aud = "https://database.windows.net"
-
-          actual_oid = claims.get("oid")
-          actual_tid = claims.get("tid")
-          actual_aud = (claims.get("aud") or "").rstrip("/")
-
-          if actual_oid != expected_oid:
-              print("ERROR: SQL token oid does not match GitHub Actions UAMI.")
-              print("Expected oid:", expected_oid)
-              print("Actual oid  :", actual_oid)
-              raise SystemExit(1)
-
-          if actual_tid != expected_tid:
-              print("ERROR: SQL token tenant does not match expected tenant.")
-              raise SystemExit(1)
-
-          if actual_aud != expected_aud:
-              print("ERROR: SQL token audience is not Azure SQL.")
-              raise SystemExit(1)
-
-          print("SUCCESS: SQL token identity matches GitHub Actions UAMI.")
-          PY
-
-      - name: Remove raw SQL access token
-        if: always()
-        shell: bash
-        run: |
-          rm -f "$RUNNER_TEMP/sql-token"
-
-      - name: Initialize Azure SQL database
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP_PRINCIPAL_ID="${{ steps.tfout.outputs.app_principal_id }}"
-
-          echo "App Service managed identity: $APP_PRINCIPAL_ID"
-
-          if [ -z "$APP_PRINCIPAL_ID" ]; then
-            echo "ERROR: App Service principal ID is empty."
-            exit 1
-          fi
-
-          APP_SID=$(python3 - "$APP_PRINCIPAL_ID" <<'PY'
-          import sys
-          import uuid
-
-          principal_id = uuid.UUID(sys.argv[1])
-          print("0x" + principal_id.bytes_le.hex())
-          PY
-          )
-
-          echo "Generated SQL SID successfully."
-
-          SQL_SCRIPT="$RUNNER_TEMP/init.sql"
-
-          sed \
-            "s/__APP_SERVICE_OBJECT_ID_SID__/$APP_SID/g" \
-            "scripts/sql/init.sql" \
-            > "$SQL_SCRIPT"
-
-          if [ ! -s "$SQL_SCRIPT" ]; then
-            echo "ERROR: Generated SQL script is empty or missing."
-            exit 1
-          fi
-
-          if grep -q "__APP_SERVICE_OBJECT_ID_SID__" "$SQL_SCRIPT"; then
-            echo "ERROR: SQL SID placeholder was not replaced."
-            exit 1
-          fi
-
-          /opt/mssql-tools18/bin/sqlcmd \
-            -S "${{ steps.tfout.outputs.sql_fqdn }}" \
+          sqlcmd \
+            -S "$SQL_FQDN" \
             -d "$SQL_DATABASE_NAME" \
             -G \
-            -P "$RUNNER_TEMP/sql-token-utf16" \
+            -P "$RUNNER_TEMP/sql-token" \
             -b \
             -l 60 \
-            -i "$SQL_SCRIPT"
+            -i app/sql/init.sql
 
-      - name: Verify SQL database objects
-        shell: bash
-        run: |
-          set -euo pipefail
+          echo "Azure SQL database initialized."
 
-          /opt/mssql-tools18/bin/sqlcmd \
-            -S "${{ steps.tfout.outputs.sql_fqdn }}" \
-            -d "$SQL_DATABASE_NAME" \
-            -G \
-            -P "$RUNNER_TEMP/sql-token-utf16" \
-            -b \
-            -l 60 \
-            -Q "SELECT DB_NAME() AS DatabaseName; SELECT name FROM sys.tables WHERE name = 'Todo';"
-
-      - name: Diagnose App Service SQL principal
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Checking App Service SQL database principal..."
-
-          /opt/mssql-tools18/bin/sqlcmd \
-            -S "${{ steps.tfout.outputs.sql_fqdn }}" \
-            -d "$SQL_DATABASE_NAME" \
-            -G \
-            -P "$RUNNER_TEMP/sql-token-utf16" \
-            -b \
-            -l 60 \
-            -Q "SELECT name, type, type_desc, authentication_type_desc, CONVERT(varchar(100), sid, 1) AS sid FROM sys.database_principals WHERE name = N'azurecrud-dev-app';"
-
-          echo "Checking App Service SQL role memberships..."
-
-          /opt/mssql-tools18/bin/sqlcmd \
-            -S "${{ steps.tfout.outputs.sql_fqdn }}" \
-            -d "$SQL_DATABASE_NAME" \
-            -G \
-            -P "$RUNNER_TEMP/sql-token-utf16" \
-            -b \
-            -l 60 \
-            -Q "SELECT rp.name AS role_name, mp.name AS member_name FROM sys.database_role_members drm JOIN sys.database_principals rp ON drm.role_principal_id = rp.principal_id JOIN sys.database_principals mp ON drm.member_principal_id = mp.principal_id WHERE mp.name = N'azurecrud-dev-app';"
-
-          echo "SQL principal diagnostics completed."
-      - name: Temporarily enable Key Vault access
+      - name: Temporarily Enable Key Vault
         shell: bash
         run: |
           set -euo pipefail
@@ -358,19 +220,14 @@ jobs:
             --public-network-access Enabled \
             --only-show-errors > /dev/null
 
-          echo "Temporary Key Vault public access enabled."
+          echo "Key Vault temporarily enabled."
 
-      - name: Create database connection secret
+      - name: Create Key Vault SQL Connection Secret
         shell: bash
+        env:
+          SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
         run: |
           set -euo pipefail
-
-          SQL_FQDN="${{ steps.tfout.outputs.sql_fqdn }}"
-
-          if [ -z "$SQL_FQDN" ]; then
-            echo "ERROR: SQL fully qualified domain name is empty."
-            exit 1
-          fi
 
           CONNECTION_STRING="Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Encrypt=True;TrustServerCertificate=False;"
 
@@ -382,9 +239,9 @@ jobs:
             --value "$CONNECTION_STRING" \
             --only-show-errors > /dev/null
 
-          echo "Key Vault secret database-connection created successfully."
+          echo "Key Vault database-connection secret created."
 
-      - name: Refresh App Service Key Vault references
+      - name: Refresh App Service Key Vault References
         shell: bash
         run: |
           set -euo pipefail
@@ -397,28 +254,12 @@ jobs:
 
           az rest \
             --method post \
-            --url "https://management.azure.com${APP_ID}/config/configreferences/appsettings/refresh?api-version=2022-03-01"
+            --url "https://management.azure.com${APP_ID}/config/configreferences/appsettings/refresh?api-version=2022-03-01" \
+            --only-show-errors
 
-          echo "App Service Key Vault references refreshed."
+          echo "Key Vault references refreshed."
 
-      - name: Azure Login for cleanup
-        if: always()
-        uses: azure/login@v2
-        with:
-          client-id: ${{ vars.AZURE_CLIENT_ID }}
-          tenant-id: ${{ vars.AZURE_TENANT_ID }}
-          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Verify Azure CLI login for cleanup
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          echo "Verifying Azure CLI authentication..."
-          az account show --only-show-errors -o table
-
-      - name: Restore Key Vault private-only state
+      - name: Restore Key Vault Private Access
         if: always()
         shell: bash
         run: |
@@ -429,29 +270,16 @@ jobs:
             --only-show-errors > /dev/null
 
           echo "Key Vault public access disabled."
-      - name: Remove SQL access token
-        if: always()
-        shell: bash
-        run: |
-          rm -f "$RUNNER_TEMP/sql-token-utf16"
 
-      - name: Remove temporary SQL firewall rule
+      - name: Remove SQL Token
         if: always()
         shell: bash
         run: |
-          if az sql server show \
-            --resource-group "$RESOURCE_GROUP" \
-            --name "$SQL_SERVER_NAME" \
-            --only-show-errors > /dev/null 2>&1; then
-            az sql server firewall-rule delete \
-              --resource-group "$RESOURCE_GROUP" \
-              --server "$SQL_SERVER_NAME" \
-              --name github-actions-temp
-          else
-            echo "SQL server does not exist. Nothing to clean up."
-          fi
+          rm -f "$RUNNER_TEMP/sql-token"
+
+
   deploy:
-    name: Stage 3 - Application Deployment
+    name: Deploy Python Application
     runs-on: ubuntu-latest
     needs: infrastructure
 
@@ -460,11 +288,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download application artifact
+      - name: Download Python Artifact
         uses: actions/download-artifact@v4
         with:
-          name: todo-api
-          path: ./publish
+          name: python-app
+          path: package
 
       - name: Azure Login
         uses: azure/login@v2
@@ -473,54 +301,65 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Deploy to Azure App Service
+      - name: Deploy Python Application
         uses: azure/webapps-deploy@v3
         with:
-          app-name: azurecrud-dev-app
-          package: ./publish
+          app-name: ${{ env.APP_NAME }}
+          package: ./package
 
-      - name: Wait for application startup
-        shell: bash
-        run: sleep 30
+      - name: Wait for Application
+        run: |
+          sleep 30
 
-      - name: Health check
+      - name: Health Check
         shell: bash
         run: |
           set -euo pipefail
 
-          curl --fail --silent --show-error \
-            "https://azurecrud-dev-app.azurewebsites.net/health"
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 5 \
+            --retry-delay 10 \
+            "https://${APP_NAME}.azurewebsites.net/health"
 
-      - name: CRUD verification
+          echo
+          echo "Health check passed."
+
+      - name: Verify Todo Create and Read
         shell: bash
         run: |
           set -euo pipefail
 
-          BASE_URL="https://azurecrud-dev-app.azurewebsites.net"
+          BASE_URL="https://${APP_NAME}.azurewebsites.net"
 
-          CREATE_RESPONSE=$(curl --fail --silent --show-error \
-            -X POST "$BASE_URL/api/Todo" \
-            -H "Content-Type: application/json" \
-            -d '{"title":"GitHub Actions Test","description":"Pipeline CRUD test","completed":false}')
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            -X POST \
+            "$BASE_URL/todos" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "title=GitHub Actions Test" \
+            --data-urlencode "description=Python Azure SQL Test"
 
-          echo "$CREATE_RESPONSE"
+          RESPONSE=$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            "$BASE_URL/")
 
-          TODO_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id')
+          echo "$RESPONSE"
 
-          if [ -z "$TODO_ID" ] || [ "$TODO_ID" = "null" ]; then
-            echo "Failed to obtain Todo ID."
+          if ! echo "$RESPONSE" | grep -q "GitHub Actions Test"; then
+            echo "Todo was not found in the application response."
             exit 1
           fi
 
-          curl --fail --silent --show-error \
-            "$BASE_URL/api/Todo/$TODO_ID"
+          echo "Python UI → Azure SQL → Python UI test passed."
 
-          curl --fail --silent --show-error \
-            -X PATCH "$BASE_URL/api/Todo/$TODO_ID" \
-            -H "Content-Type: application/json" \
-            -d '{"completed":true}'
-
-          curl --fail --silent --show-error \
-            -X DELETE "$BASE_URL/api/Todo/$TODO_ID"
-
-          echo "CRUD verification completed successfully."
+      - name: Deployment Summary
+        run: |
+          echo "Application deployed successfully."
+          echo "https://${APP_NAME}.azurewebsites.net"
