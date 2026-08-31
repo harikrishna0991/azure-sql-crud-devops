@@ -1,4 +1,4 @@
-name: Azure CRUD Deployment
+﻿name: Azure CRUD Deployment
 
 on:
   push:
@@ -525,7 +525,6 @@ jobs:
 
           echo
           echo "Health check passed."
-
       - name: Verify Todo Create and Read
         shell: bash
         run: |
@@ -537,22 +536,23 @@ jobs:
             --fail \
             --silent \
             --show-error \
-            --location \
             -X POST \
             "$BASE_URL/todos" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "title=GitHub Actions Test" \
             --data-urlencode "description=Python Azure SQL Test" \
-            -o "$RUNNER_TEMP/create-response.html"
+            -o /dev/null
 
-          PAGE=$(cat "$RUNNER_TEMP/create-response.html")
+          PAGE=$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            "$BASE_URL/")
 
-          if ! echo "$PAGE" | grep -q "GitHub Actions Test"; then
-            echo "ERROR: Created Todo was not found on the UI."
-            exit 1
-          fi
+          echo "$PAGE" | grep -q "GitHub Actions Test"
 
           echo "Create and Read verification passed."
+
 
       - name: Verify Todo Delete
         shell: bash
