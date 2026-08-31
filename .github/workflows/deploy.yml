@@ -1,4 +1,4 @@
-name: Azure CRUD Deployment
+﻿name: Azure CRUD Deployment
 
 on:
   push:
@@ -301,23 +301,23 @@ jobs:
           echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
 
           /opt/mssql-tools18/bin/sqlcmd -?
-
       - name: Acquire Azure SQL Access Token
         shell: bash
         run: |
           set -euo pipefail
 
-          SQL_TOKEN=$(az account get-access-token \
+          az account get-access-token \
             --resource https://database.windows.net \
             --query accessToken \
-            --output tsv)
+            --output tsv |
+            tr -d '\r\n' |
+            iconv -f ASCII -t UTF-16LE \
+            > "$RUNNER_TEMP/sql-token-utf16"
 
-          if [ -z "$SQL_TOKEN" ]; then
-            echo "ERROR: Azure SQL access token was empty."
-            exit 1
-          fi
+          test -s "$RUNNER_TEMP/sql-token-utf16"
 
-          printf '%s' "$SQL_TOKEN" > "$RUNNER_TEMP/sql-token-utf16"
+          echo "Azure SQL access token prepared."
+
 
       - name: Initialize Azure SQL Database
         env:
