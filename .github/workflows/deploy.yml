@@ -372,7 +372,7 @@ jobs:
             exit 1
           fi
 
-          CONNECTION_STRING="Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Authentication=Active Directory Managed Identity;Encrypt=True;TrustServerCertificate=False;"
+          CONNECTION_STRING="Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Encrypt=True;TrustServerCertificate=False;"
 
           echo "::add-mask::$CONNECTION_STRING"
 

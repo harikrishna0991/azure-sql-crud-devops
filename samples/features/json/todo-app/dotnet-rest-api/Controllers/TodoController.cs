@@ -1,4 +1,6 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Azure.Core;
+using Azure.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Data;
 
@@ -10,13 +12,33 @@ public class TodoController(IConfiguration configuration) : ControllerBase
 {
     private readonly string _connectionString = BuildConnectionString(configuration);
 
+    private static readonly TokenCredential SqlCredential =
+        new ManagedIdentityCredential();
+
+    private static async Task<SqlConnection> CreateSqlConnectionAsync(
+        string connectionString,
+        CancellationToken cancellationToken)
+    {
+        var connection = new SqlConnection(connectionString);
+
+        AccessToken token = await SqlCredential.GetTokenAsync(
+            new TokenRequestContext(
+                new[] { "https://database.windows.net/.default" }),
+            cancellationToken);
+
+        connection.AccessToken = token.Token;
+
+        return connection;
+    }
+
     [HttpGet]
     public async Task<ActionResult<IEnumerable<TodoItem>>> GetAll(
         CancellationToken cancellationToken)
     {
         var results = new List<TodoItem>();
 
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection =
+            await CreateSqlConnectionAsync(_connectionString, cancellationToken);
         await connection.OpenAsync(cancellationToken);
 
         const string sql = """
@@ -42,7 +64,8 @@ public class TodoController(IConfiguration configuration) : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection =
+            await CreateSqlConnectionAsync(_connectionString, cancellationToken);
         await connection.OpenAsync(cancellationToken);
 
         const string sql = """
@@ -75,7 +98,8 @@ public class TodoController(IConfiguration configuration) : ControllerBase
             return BadRequest(new { message = "Title is required." });
         }
 
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection =
+            await CreateSqlConnectionAsync(_connectionString, cancellationToken);
         await connection.OpenAsync(cancellationToken);
 
         const string sql = """
@@ -124,7 +148,8 @@ public class TodoController(IConfiguration configuration) : ControllerBase
             return BadRequest(new { message = "Title is required." });
         }
 
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection =
+            await CreateSqlConnectionAsync(_connectionString, cancellationToken);
         await connection.OpenAsync(cancellationToken);
 
         const string sql = """
@@ -171,7 +196,8 @@ public class TodoController(IConfiguration configuration) : ControllerBase
         [FromBody] TodoPatchRequest request,
         CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection =
+            await CreateSqlConnectionAsync(_connectionString, cancellationToken);
         await connection.OpenAsync(cancellationToken);
 
         const string sql = """
@@ -232,7 +258,8 @@ public class TodoController(IConfiguration configuration) : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
-        await using var connection = new SqlConnection(_connectionString);
+        await using var connection =
+            await CreateSqlConnectionAsync(_connectionString, cancellationToken);
         await connection.OpenAsync(cancellationToken);
 
         const string sql = """
