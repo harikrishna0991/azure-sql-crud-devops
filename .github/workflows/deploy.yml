@@ -1,4 +1,4 @@
-﻿name: Azure CRUD Deployment
+name: Azure CRUD Deployment
 
 on:
   push:
@@ -378,7 +378,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          CONNECTION_STRING="Driver={ODBC Driver 18 for SQL Server};Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Encrypt=True;TrustServerCertificate=False;"
+          CONNECTION_STRING="Driver={ODBC Driver 18 for SQL Server};Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Encrypt=yes;TrustServerCertificate=no;"
 
           echo "::add-mask::$CONNECTION_STRING"
 
