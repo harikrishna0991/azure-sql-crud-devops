@@ -1,4 +1,4 @@
-﻿name: Azure CRUD Deployment
+name: Azure CRUD Deployment
 
 on:
   push:
@@ -567,15 +567,57 @@ jobs:
             --show-error \
             "$BASE_URL/")
 
-          TODO_ID=$(echo "$PAGE" |
-            grep -oE 'action="/todos/[0-9]+/delete"' |
-            grep -oE '[0-9]+' |
-            head -n 1 || true)
+          TODO_ID=$(PAGE="$PAGE" python - <<'PY'
+          import os
+          import re
+          from html.parser import HTMLParser
 
-          if [ -z "$TODO_ID" ]; then
-            echo "ERROR: Unable to determine Todo ID for delete verification."
-            exit 1
-          fi
+          page = os.environ["PAGE"]
+
+          class TodoParser(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.in_form = False
+                  self.current_action = None
+                  self.current_text = []
+                  self.todo_id = None
+
+              def handle_starttag(self, tag, attrs):
+                  attrs = dict(attrs)
+
+                  if tag == "form":
+                      action = attrs.get("action", "")
+                      match = re.fullmatch(r"/todos/([0-9]+)/delete", action)
+
+                      if match:
+                          self.in_form = True
+                          self.current_action = match.group(1)
+                          self.current_text = []
+
+              def handle_data(self, data):
+                  if self.in_form:
+                      self.current_text.append(data)
+
+              def handle_endtag(self, tag):
+                  if tag == "form" and self.in_form:
+                      text = " ".join(self.current_text)
+
+                      if "GitHub Actions Test" in text:
+                          self.todo_id = self.current_action
+
+                      self.in_form = False
+                      self.current_action = None
+                      self.current_text = []
+
+          parser = TodoParser()
+          parser.feed(page)
+
+          if not parser.todo_id:
+              raise SystemExit("ERROR: Unable to find Todo ID for GitHub Actions Test.")
+
+          print(parser.todo_id)
+          PY
+          )
 
           echo "Deleting Todo ID: $TODO_ID"
 
@@ -594,12 +636,11 @@ jobs:
             "$BASE_URL/")
 
           if echo "$UPDATED_PAGE" | grep -q "GitHub Actions Test"; then
-            echo "ERROR: Todo still exists after delete."
+            echo "ERROR: GitHub Actions Test still exists after delete."
             exit 1
           fi
 
           echo "Delete verification passed."
-
       - name: Deployment Summary
         shell: bash
         run: |
