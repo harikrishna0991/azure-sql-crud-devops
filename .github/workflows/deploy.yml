@@ -1,4 +1,4 @@
-﻿name: Azure CRUD Deployment
+name: Azure CRUD Deployment
 
 on:
   push:
@@ -553,16 +553,15 @@ jobs:
 
           echo "Create and Read verification passed."
       - name: Verify Todo Delete
-        env:
-          SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
         shell: bash
         run: |
           set -euo pipefail
 
           BASE_URL="https://${APP_NAME}.azurewebsites.net"
+          SQL_FQDN="${SQL_SERVER_NAME}.database.windows.net"
 
           TODO_ID=$(
-            /opt/mssql-tools18/bin/sqlcmd \
+            sqlcmd \
               -S "$SQL_FQDN" \
               -d "$SQL_DATABASE_NAME" \
               -G \
@@ -587,7 +586,7 @@ jobs:
             -o /dev/null
 
           REMAINING_ID=$(
-            /opt/mssql-tools18/bin/sqlcmd \
+            sqlcmd \
               -S "$SQL_FQDN" \
               -d "$SQL_DATABASE_NAME" \
               -G \
