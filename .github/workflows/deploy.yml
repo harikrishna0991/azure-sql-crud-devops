@@ -408,6 +408,16 @@ jobs:
           client-id: ${{ vars.AZURE_CLIENT_ID }}
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify Azure CLI login for cleanup
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Verifying Azure CLI authentication..."
+          az account show --only-show-errors -o table
+
       - name: Restore Key Vault private-only state
         if: always()
         shell: bash
