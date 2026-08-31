@@ -40,6 +40,8 @@ jobs:
       - name: Install Python dependencies
         working-directory: app
         run: |
+          set -euo pipefail
+
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
@@ -80,7 +82,7 @@ jobs:
 
           cp -R app/. package/
 
-          echo "Deployment package contents:"
+          echo "Deployment package:"
           find package -maxdepth 3 -type f -print
 
       - name: Upload Python artifact
@@ -125,6 +127,18 @@ jobs:
             --subscription "$AZURE_SUBSCRIPTION_ID" \
             --only-show-errors \
             -o table
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - name: Verify Terraform
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform version
 
       - name: Terraform Init
         working-directory: terraform
@@ -173,7 +187,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          SQL_FQDN=$(terraform output -raw sql_fqdn)
+          SQL_FQDN=$(terraform output -raw sql_fully_qualified_domain_name)
 
           if [ -z "$SQL_FQDN" ]; then
             echo "ERROR: SQL FQDN is empty."
@@ -182,7 +196,7 @@ jobs:
 
           echo "sql_fqdn=$SQL_FQDN" >> "$GITHUB_OUTPUT"
 
-      - name: Add App Service SQL Firewall Rules
+      - name: Configure App Service SQL Firewall Rules
         shell: bash
         run: |
           set -euo pipefail
@@ -280,7 +294,7 @@ jobs:
             --output tsv)
 
           if [ -z "$SQL_TOKEN" ]; then
-            echo "ERROR: SQL access token was empty."
+            echo "ERROR: Azure SQL access token was empty."
             exit 1
           fi
 
@@ -470,6 +484,8 @@ jobs:
       - name: Wait for Application Startup
         shell: bash
         run: |
+          set -euo pipefail
+
           sleep 30
 
       - name: Health Check
@@ -497,29 +513,19 @@ jobs:
 
           BASE_URL="https://${APP_NAME}.azurewebsites.net"
 
-          RESPONSE=$(curl \
+          curl \
             --fail \
             --silent \
             --show-error \
+            --location \
             -X POST \
             "$BASE_URL/todos" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "title=GitHub Actions Test" \
-            --data-urlencode "description=Python Azure SQL Test")
+            --data-urlencode "description=Python Azure SQL Test" \
+            -o "$RUNNER_TEMP/create-response.html"
 
-          echo "Create response received."
-
-          if ! echo "$RESPONSE" | grep -q "GitHub Actions Test"; then
-            echo "WARNING: Create response did not contain the Todo title."
-          fi
-
-          PAGE=$(curl \
-            --fail \
-            --silent \
-            --show-error \
-            "$BASE_URL/")
-
-          echo "$PAGE"
+          PAGE=$(cat "$RUNNER_TEMP/create-response.html")
 
           if ! echo "$PAGE" | grep -q "GitHub Actions Test"; then
             echo "ERROR: Created Todo was not found on the UI."
@@ -558,7 +564,8 @@ jobs:
             --silent \
             --show-error \
             -X POST \
-            "$BASE_URL/todos/$TODO_ID/delete"
+            "$BASE_URL/todos/$TODO_ID/delete" \
+            -o /dev/null
 
           UPDATED_PAGE=$(curl \
             --fail \
