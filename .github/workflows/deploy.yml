@@ -371,7 +371,6 @@ jobs:
             --output none
 
           echo "Temporary Key Vault public access enabled."
-
       - name: Create Key Vault SQL Connection Secret
         env:
           SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
@@ -379,7 +378,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          CONNECTION_STRING="Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Encrypt=True;TrustServerCertificate=False;"
+          CONNECTION_STRING="Driver={ODBC Driver 18 for SQL Server};Server=tcp:${SQL_FQDN},1433;Database=$SQL_DATABASE_NAME;Encrypt=True;TrustServerCertificate=False;"
 
           echo "::add-mask::$CONNECTION_STRING"
 
@@ -391,6 +390,7 @@ jobs:
             --output none
 
           echo "Key Vault database-connection secret created."
+
 
       - name: Refresh App Service Key Vault References
         shell: bash
