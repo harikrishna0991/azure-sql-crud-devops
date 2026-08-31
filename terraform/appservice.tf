@@ -36,9 +36,9 @@ resource "azurerm_linux_web_app" "app" {
     health_check_path                 = "/health"
     health_check_eviction_time_in_min = 5
 
-    minimum_tls_version = "1.2"
-    ftps_state          = "Disabled"
-  vnet_route_all_enabled = true
+    minimum_tls_version    = "1.2"
+    ftps_state             = "Disabled"
+    vnet_route_all_enabled = true
 
     application_stack {
       dotnet_version = "8.0"
