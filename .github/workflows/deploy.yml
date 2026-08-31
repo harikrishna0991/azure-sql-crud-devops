@@ -553,24 +553,28 @@ jobs:
 
           echo "Create and Read verification passed."
       - name: Verify Todo Delete
+        env:
+          SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
         shell: bash
         run: |
           set -euo pipefail
 
           BASE_URL="https://${APP_NAME}.azurewebsites.net"
 
-          PAGE=$(curl \
-            --fail \
-            --silent \
-            --show-error \
-            "$BASE_URL/")
+          TODO_ID=$(
+            /opt/mssql-tools18/bin/sqlcmd \
+              -S "$SQL_FQDN" \
+              -d "$SQL_DATABASE_NAME" \
+              -G \
+              -P "$RUNNER_TEMP/sql-token-utf16" \
+              -b \
+              -l 60 \
+              -h -1 \
+              -W \
+              -Q "SET NOCOUNT ON; SELECT TOP 1 Id FROM dbo.Todo WHERE Title = 'GitHub Actions Test' ORDER BY Id DESC;"
+          )
 
-          echo "$PAGE" > "$RUNNER_TEMP/todo-page.html"
-
-          TODO_ID=$(grep -B 10 -A 10 "GitHub Actions Test" "$RUNNER_TEMP/todo-page.html" |
-            grep -oE '/todos/[0-9]+/delete' |
-            head -n 1 |
-            grep -oE '[0-9]+')
+          TODO_ID=$(echo "$TODO_ID" | tr -d '[:space:]')
 
           echo "Deleting Todo ID: $TODO_ID"
 
@@ -582,18 +586,25 @@ jobs:
             "$BASE_URL/todos/$TODO_ID/delete" \
             -o /dev/null
 
-          UPDATED_PAGE=$(curl \
-            --fail \
-            --silent \
-            --show-error \
-            "$BASE_URL/")
+          REMAINING_ID=$(
+            /opt/mssql-tools18/bin/sqlcmd \
+              -S "$SQL_FQDN" \
+              -d "$SQL_DATABASE_NAME" \
+              -G \
+              -P "$RUNNER_TEMP/sql-token-utf16" \
+              -b \
+              -l 60 \
+              -h -1 \
+              -W \
+              -Q "SET NOCOUNT ON; SELECT Id FROM dbo.Todo WHERE Id = $TODO_ID;"
+          )
 
-          if echo "$UPDATED_PAGE" | grep -q "GitHub Actions Test"; then
-            echo "ERROR: GitHub Actions Test still exists after delete."
-            exit 1
-          fi
+          REMAINING_ID=$(echo "$REMAINING_ID" | tr -d '[:space:]')
+
+          test -z "$REMAINING_ID"
 
           echo "Delete verification passed."
+
 
       - name: Deployment Summary
         shell: bash
