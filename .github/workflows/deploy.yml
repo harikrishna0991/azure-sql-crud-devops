@@ -4,11 +4,16 @@ on:
   push:
     branches:
       - master
+
   workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
+
+concurrency:
+  group: azure-crud-deployment
+  cancel-in-progress: false
 
 env:
   AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
@@ -39,6 +44,7 @@ jobs:
 
       - name: Install Python dependencies
         working-directory: app
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -82,7 +88,7 @@ jobs:
 
           cp -R app/. package/
 
-          echo "Deployment package:"
+          echo "Deployment package contents:"
           find package -maxdepth 3 -type f -print
 
       - name: Upload Python artifact
@@ -102,9 +108,14 @@ jobs:
       ARM_USE_OIDC: true
       ARM_USE_AZUREAD: true
       ARM_STORAGE_USE_AZUREAD: true
+
       ARM_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      TF_VAR_sql_admin_login: ${{ vars.SQL_ADMIN_LOGIN }}
+      TF_VAR_sql_admin_object_id: ${{ vars.SQL_ADMIN_OBJECT_ID }}
+      TF_VAR_github_actions_uami_principal_id: ${{ vars.UAMI_PRINCIPAL_ID }}
 
     steps:
 
@@ -190,11 +201,19 @@ jobs:
           SQL_FQDN=$(terraform output -raw sql_fully_qualified_domain_name)
 
           if [ -z "$SQL_FQDN" ]; then
-            echo "ERROR: SQL FQDN is empty."
+            echo "ERROR: SQL fully qualified domain name is empty."
+            exit 1
+          fi
+
+          APP_HOSTNAME=$(terraform output -raw app_service_hostname)
+
+          if [ -z "$APP_HOSTNAME" ]; then
+            echo "ERROR: App Service hostname is empty."
             exit 1
           fi
 
           echo "sql_fqdn=$SQL_FQDN" >> "$GITHUB_OUTPUT"
+          echo "app_hostname=$APP_HOSTNAME" >> "$GITHUB_OUTPUT"
 
       - name: Configure App Service SQL Firewall Rules
         shell: bash
@@ -336,6 +355,8 @@ jobs:
             -b \
             -l 60 \
             -Q "SELECT DB_NAME() AS database_name, OBJECT_ID(N'dbo.Todo', N'U') AS todo_table_id;"
+
+          echo "Todo table verification completed."
 
       - name: Temporarily Enable Key Vault
         shell: bash
