@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-
   workflow_dispatch:
 
 permissions:
@@ -38,31 +37,58 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         working-directory: app
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Validate Python application
+        shell: bash
         run: |
+          set -euo pipefail
+
+          echo "Python version:"
+          python --version
+
+          echo "Working directory:"
+          pwd
+
+          echo "Application files:"
+          find app -maxdepth 3 -type f -print
+
+          echo "Compiling app.py:"
           python -m py_compile app/app.py
 
+          echo "Checking required files:"
+          test -f app/app.py
+          test -f app/Procfile
+          test -f app/requirements.txt
           test -f app/templates/index.html
           test -f app/static/style.css
           test -f app/sql/init.sql
 
-      - name: Create application package
+          echo "Python application validation passed."
+
+      - name: Create deployment package
+        shell: bash
         run: |
+          set -euo pipefail
+
           rm -rf package
-          mkdir package
+          mkdir -p package
+
           cp -R app/. package/
 
-      - name: Upload application artifact
+          echo "Deployment package contents:"
+          find package -maxdepth 3 -type f -print
+
+      - name: Upload Python artifact
         uses: actions/upload-artifact@v4
         with:
           name: python-app
           path: package/
+          if-no-files-found: error
 
 
   infrastructure:
@@ -91,32 +117,53 @@ jobs:
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
       - name: Verify Azure Login
+        shell: bash
         run: |
-          az account show --only-show-errors -o table
+          set -euo pipefail
+
+          az account show \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --only-show-errors \
+            -o table
 
       - name: Terraform Init
         working-directory: terraform
+        shell: bash
         run: |
+          set -euo pipefail
+
           terraform init -reconfigure
 
       - name: Terraform Format Check
         working-directory: terraform
+        shell: bash
         run: |
+          set -euo pipefail
+
           terraform fmt -check
 
       - name: Terraform Validate
         working-directory: terraform
+        shell: bash
         run: |
+          set -euo pipefail
+
           terraform validate
 
       - name: Terraform Plan
         working-directory: terraform
+        shell: bash
         run: |
+          set -euo pipefail
+
           terraform plan -out=tfplan
 
       - name: Terraform Apply
         working-directory: terraform
+        shell: bash
         run: |
+          set -euo pipefail
+
           terraform apply -auto-approve tfplan
 
       - name: Get Terraform Outputs
@@ -129,7 +176,7 @@ jobs:
           SQL_FQDN=$(terraform output -raw sql_fqdn)
 
           if [ -z "$SQL_FQDN" ]; then
-            echo "SQL FQDN is empty."
+            echo "ERROR: SQL FQDN is empty."
             exit 1
           fi
 
@@ -144,7 +191,12 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --name "$APP_NAME" \
             --query outboundIpAddresses \
-            -o tsv)
+            --output tsv)
+
+          if [ -z "$OUTBOUND_IPS" ]; then
+            echo "ERROR: App Service outbound IP addresses are empty."
+            exit 1
+          fi
 
           IFS=',' read -ra IPS <<< "$OUTBOUND_IPS"
 
@@ -157,29 +209,67 @@ jobs:
               --name "$RULE_NAME" \
               --start-ip-address "$IP" \
               --end-ip-address "$IP" \
-              --only-show-errors > /dev/null
+              --only-show-errors \
+              --output none
           done
 
           echo "App Service SQL firewall rules configured."
+
+      - name: Get GitHub Runner Public IP
+        id: runner_ip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNNER_IP=$(curl -fsS https://api.ipify.org)
+
+          if [ -z "$RUNNER_IP" ]; then
+            echo "ERROR: Unable to determine GitHub runner public IP."
+            exit 1
+          fi
+
+          echo "GitHub runner public IP: $RUNNER_IP"
+          echo "ip=$RUNNER_IP" >> "$GITHUB_OUTPUT"
+
+      - name: Add Temporary GitHub Runner SQL Firewall Rule
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          RUNNER_IP="${{ steps.runner_ip.outputs.ip }}"
+
+          az sql server firewall-rule create \
+            --resource-group "$RESOURCE_GROUP" \
+            --server "$SQL_SERVER_NAME" \
+            --name github-actions-temp \
+            --start-ip-address "$RUNNER_IP" \
+            --end-ip-address "$RUNNER_IP" \
+            --only-show-errors \
+            --output none
+
+          echo "Temporary GitHub Actions SQL firewall rule created."
 
       - name: Install sqlcmd
         shell: bash
         run: |
           set -euo pipefail
 
-          curl https://packages.microsoft.com/keys/microsoft.asc | \
-            sudo gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg
+          curl -fsSL https://packages.microsoft.com/keys/microsoft.asc |
+            sudo gpg --dearmor \
+              --output /usr/share/keyrings/microsoft-prod.gpg
 
-          curl https://packages.microsoft.com/config/ubuntu/24.04/prod.list | \
-            sudo tee /etc/apt/sources.list.d/microsoft-prod.list
+          curl -fsSL https://packages.microsoft.com/config/ubuntu/24.04/prod.list |
+            sudo tee /etc/apt/sources.list.d/microsoft-prod.list > /dev/null
 
           sudo apt-get update
 
-          sudo ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
+          sudo ACCEPT_EULA=Y apt-get install -y \
+            mssql-tools18 \
+            unixodbc-dev
 
           echo "/opt/mssql-tools18/bin" >> "$GITHUB_PATH"
 
-      - name: Acquire SQL Access Token
+      - name: Acquire Azure SQL Access Token
         shell: bash
         run: |
           set -euo pipefail
@@ -187,27 +277,51 @@ jobs:
           SQL_TOKEN=$(az account get-access-token \
             --resource https://database.windows.net \
             --query accessToken \
-            -o tsv)
+            --output tsv)
 
-          printf '%s' "$SQL_TOKEN" > "$RUNNER_TEMP/sql-token"
+          if [ -z "$SQL_TOKEN" ]; then
+            echo "ERROR: SQL access token was empty."
+            exit 1
+          fi
+
+          printf '%s' "$SQL_TOKEN" > "$RUNNER_TEMP/sql-token-utf16"
 
       - name: Initialize Azure SQL Database
-        shell: bash
         env:
           SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
+        shell: bash
         run: |
           set -euo pipefail
 
-          sqlcmd \
+          echo "Initializing database: $SQL_DATABASE_NAME"
+          echo "SQL Server: $SQL_FQDN"
+
+          /opt/mssql-tools18/bin/sqlcmd \
             -S "$SQL_FQDN" \
             -d "$SQL_DATABASE_NAME" \
             -G \
-            -P "$RUNNER_TEMP/sql-token" \
+            -P "$RUNNER_TEMP/sql-token-utf16" \
             -b \
             -l 60 \
             -i app/sql/init.sql
 
-          echo "Azure SQL database initialized."
+          echo "Azure SQL initialization completed."
+
+      - name: Verify Todo Table
+        env:
+          SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S "$SQL_FQDN" \
+            -d "$SQL_DATABASE_NAME" \
+            -G \
+            -P "$RUNNER_TEMP/sql-token-utf16" \
+            -b \
+            -l 60 \
+            -Q "SELECT DB_NAME() AS database_name, OBJECT_ID(N'dbo.Todo', N'U') AS todo_table_id;"
 
       - name: Temporarily Enable Key Vault
         shell: bash
@@ -218,14 +332,15 @@ jobs:
             --name "$KEY_VAULT_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --public-network-access Enabled \
-            --only-show-errors > /dev/null
+            --only-show-errors \
+            --output none
 
-          echo "Key Vault temporarily enabled."
+          echo "Temporary Key Vault public access enabled."
 
       - name: Create Key Vault SQL Connection Secret
-        shell: bash
         env:
           SQL_FQDN: ${{ steps.tfout.outputs.sql_fqdn }}
+        shell: bash
         run: |
           set -euo pipefail
 
@@ -237,7 +352,8 @@ jobs:
             --vault-name "$KEY_VAULT_NAME" \
             --name database-connection \
             --value "$CONNECTION_STRING" \
-            --only-show-errors > /dev/null
+            --only-show-errors \
+            --output none
 
           echo "Key Vault database-connection secret created."
 
@@ -250,14 +366,14 @@ jobs:
             --resource-group "$RESOURCE_GROUP" \
             --name "$APP_NAME" \
             --query id \
-            -o tsv)
+            --output tsv)
 
           az rest \
             --method post \
             --url "https://management.azure.com${APP_ID}/config/configreferences/appsettings/refresh?api-version=2022-03-01" \
             --only-show-errors
 
-          echo "Key Vault references refreshed."
+          echo "App Service Key Vault references refreshed."
 
       - name: Restore Key Vault Private Access
         if: always()
@@ -267,15 +383,39 @@ jobs:
             --name "$KEY_VAULT_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --public-network-access Disabled \
-            --only-show-errors > /dev/null
+            --only-show-errors \
+            --output none || true
 
           echo "Key Vault public access disabled."
 
-      - name: Remove SQL Token
+      - name: Remove Temporary GitHub Runner SQL Firewall Rule
         if: always()
         shell: bash
         run: |
-          rm -f "$RUNNER_TEMP/sql-token"
+          if az sql server show \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$SQL_SERVER_NAME" \
+            --only-show-errors \
+            --output none 2>/dev/null; then
+
+            az sql server firewall-rule delete \
+              --resource-group "$RESOURCE_GROUP" \
+              --server "$SQL_SERVER_NAME" \
+              --name github-actions-temp \
+              --yes \
+              --only-show-errors \
+              --output none || true
+
+            echo "Temporary GitHub Actions SQL firewall rule removed."
+          else
+            echo "SQL server does not exist. Nothing to clean up."
+          fi
+
+      - name: Remove SQL Access Token
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/sql-token-utf16"
 
 
   deploy:
@@ -301,13 +441,34 @@ jobs:
           tenant-id: ${{ vars.AZURE_TENANT_ID }}
           subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Verify Azure Login
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          az account show \
+            --subscription "$AZURE_SUBSCRIPTION_ID" \
+            --only-show-errors \
+            -o table
+
       - name: Deploy Python Application
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.APP_NAME }}
           package: ./package
 
-      - name: Wait for Application
+      - name: Restart App Service
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          az webapp restart \
+            --resource-group "$RESOURCE_GROUP" \
+            --name "$APP_NAME" \
+            --only-show-errors
+
+      - name: Wait for Application Startup
+        shell: bash
         run: |
           sleep 30
 
@@ -316,13 +477,15 @@ jobs:
         run: |
           set -euo pipefail
 
+          BASE_URL="https://${APP_NAME}.azurewebsites.net"
+
           curl \
             --fail \
             --silent \
             --show-error \
-            --retry 5 \
+            --retry 10 \
             --retry-delay 10 \
-            "https://${APP_NAME}.azurewebsites.net/health"
+            "$BASE_URL/health"
 
           echo
           echo "Health check passed."
@@ -334,7 +497,7 @@ jobs:
 
           BASE_URL="https://${APP_NAME}.azurewebsites.net"
 
-          curl \
+          RESPONSE=$(curl \
             --fail \
             --silent \
             --show-error \
@@ -342,24 +505,82 @@ jobs:
             "$BASE_URL/todos" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             --data-urlencode "title=GitHub Actions Test" \
-            --data-urlencode "description=Python Azure SQL Test"
+            --data-urlencode "description=Python Azure SQL Test")
 
-          RESPONSE=$(curl \
+          echo "Create response received."
+
+          if ! echo "$RESPONSE" | grep -q "GitHub Actions Test"; then
+            echo "WARNING: Create response did not contain the Todo title."
+          fi
+
+          PAGE=$(curl \
             --fail \
             --silent \
             --show-error \
             "$BASE_URL/")
 
-          echo "$RESPONSE"
+          echo "$PAGE"
 
-          if ! echo "$RESPONSE" | grep -q "GitHub Actions Test"; then
-            echo "Todo was not found in the application response."
+          if ! echo "$PAGE" | grep -q "GitHub Actions Test"; then
+            echo "ERROR: Created Todo was not found on the UI."
             exit 1
           fi
 
-          echo "Python UI → Azure SQL → Python UI test passed."
+          echo "Create and Read verification passed."
+
+      - name: Verify Todo Delete
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_URL="https://${APP_NAME}.azurewebsites.net"
+
+          PAGE=$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            "$BASE_URL/")
+
+          TODO_ID=$(echo "$PAGE" |
+            grep -oE 'action="/todos/[0-9]+/delete"' |
+            grep -oE '[0-9]+' |
+            head -n 1 || true)
+
+          if [ -z "$TODO_ID" ]; then
+            echo "ERROR: Unable to determine Todo ID for delete verification."
+            exit 1
+          fi
+
+          echo "Deleting Todo ID: $TODO_ID"
+
+          curl \
+            --fail \
+            --silent \
+            --show-error \
+            -X POST \
+            "$BASE_URL/todos/$TODO_ID/delete"
+
+          UPDATED_PAGE=$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            "$BASE_URL/")
+
+          if echo "$UPDATED_PAGE" | grep -q "GitHub Actions Test"; then
+            echo "ERROR: Todo still exists after delete."
+            exit 1
+          fi
+
+          echo "Delete verification passed."
 
       - name: Deployment Summary
+        shell: bash
         run: |
-          echo "Application deployed successfully."
+          echo "=========================================="
+          echo "Azure Python CRUD deployment succeeded."
+          echo "=========================================="
+          echo "Application:"
           echo "https://${APP_NAME}.azurewebsites.net"
+          echo
+          echo "Health:"
+          echo "https://${APP_NAME}.azurewebsites.net/health"
