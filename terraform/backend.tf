@@ -6,6 +6,6 @@ terraform {
     key                  = "dev/terraform.tfstate"
 
     use_azuread_auth = true
-    use_cli          = true
+    use_oidc         = true
   }
 }
