@@ -547,11 +547,14 @@ jobs:
             --fail \
             --silent \
             --show-error \
+            --retry 10 \
+            --retry-delay 2 \
             "$BASE_URL/")
 
           echo "$PAGE" | grep -q "GitHub Actions Test"
 
           echo "Create and Read verification passed."
+
       - name: Verify Todo Delete
         shell: bash
         run: |
@@ -561,7 +564,7 @@ jobs:
           SQL_FQDN="${SQL_SERVER_NAME}.database.windows.net"
 
           TODO_ID=$(
-            sqlcmd \
+            /opt/mssql-tools18/bin/sqlcmd \
               -S "$SQL_FQDN" \
               -d "$SQL_DATABASE_NAME" \
               -G \
@@ -575,6 +578,8 @@ jobs:
 
           TODO_ID=$(echo "$TODO_ID" | tr -d '[:space:]')
 
+          test -n "$TODO_ID"
+
           echo "Deleting Todo ID: $TODO_ID"
 
           curl \
@@ -586,7 +591,7 @@ jobs:
             -o /dev/null
 
           REMAINING_ID=$(
-            sqlcmd \
+            /opt/mssql-tools18/bin/sqlcmd \
               -S "$SQL_FQDN" \
               -d "$SQL_DATABASE_NAME" \
               -G \
@@ -603,7 +608,6 @@ jobs:
           test -z "$REMAINING_ID"
 
           echo "Delete verification passed."
-
 
       - name: Deployment Summary
         shell: bash
