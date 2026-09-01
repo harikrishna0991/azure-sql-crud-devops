@@ -1,4 +1,4 @@
-name: Azure CRUD Deployment
+﻿name: Azure CRUD Deployment
 
 on:
   push:
@@ -339,6 +339,24 @@ jobs:
             -i app/sql/init.sql
 
           echo "Azure SQL initialization completed."
+
+      - name: Grant Database Access
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SQL_FQDN="${SQL_SERVER_NAME}.database.windows.net"
+
+          /opt/mssql-tools18/bin/sqlcmd \
+            -S "$SQL_FQDN" \
+            -d "$SQL_DATABASE_NAME" \
+            -G \
+            -P "$RUNNER_TEMP/sql-token-utf16" \
+            -b \
+            -l 60 \
+            -Q "IF NOT EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'mohdhussain7110@outlook.com') CREATE USER [mohdhussain7110@outlook.com] FROM EXTERNAL PROVIDER; ALTER ROLE db_datareader ADD MEMBER [mohdhussain7110@outlook.com]; ALTER ROLE db_datawriter ADD MEMBER [mohdhussain7110@outlook.com];"
+
+          echo "Database access configured."
 
       - name: Verify Todo Table
         env:
